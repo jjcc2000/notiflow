@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"time"
 
@@ -27,7 +28,7 @@ func New(addr, password string, db int) *Client {
 }
 
 func (c *Client) Ping(ctx context.Context) error {
-	return c.rdb.Close()
+	return c.rdb.Ping(ctx).Err()
 }
 
 func (c *Client) Close() error {
@@ -73,16 +74,64 @@ func (c *Client) CheckRateLimit(ctx context.Context, tenantID string, limit int6
 
 // CacheTenantAuth stores a tenant ID for a hashed API key.
 // TTL of 5 minutes — short enough for key rotation to propagate quickly.
-
-func (c *Client) GetCachedTenantAuth(ctx context.Context, apiKey string,tenantID) error {
+func (c *Client) GetCachedTenantAuth(ctx context.Context, apiKey string) (string, error) {
 
 	key := authCached(apiKey)
-	return c.rdb.Set(ctx, key, tenantID, 5*time.Minute).Err()
+	val, err := c.rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	return val, nil
+
 }
 
-func (c *Client)GetCachedTenantAuth(ctx context.Context, apiKey string) (string ,error){
+func (c *Client) InvalitedTenantAuth(ctx context.Context, apiKey string) error {
+	return c.rdb.Del(ctx, authCached(apiKey)).Err()
+}
 
-	
-	
+func authCached(apiKey string) string {
+	h := sha256.Sum256([]byte(apiKey))
+	return fmt.Sprintf("auth:%x", h[:8])
+}
 
+// --- Idempotency ---
+
+// SetIdempotencyKey marks an idempotency key as seen.
+// Returns true if this is the FIRST time we've seen this key (safe to process).
+// Returns false if it's a duplicate (skip processing).
+// TTL of 24 hours — matches typical idempotency window.
+
+func (c *Client) SetIdempotencyKey(ctx context.Context, key string) (bool, error) {
+	redisKey := fmt.Sprintf("idem:%s", key)
+	// SetNX = SET if Not eXists — atomic check-and-set
+	set, err := c.rdb.SetNX(ctx, redisKey, "1", 24*time.Hour).Result()
+
+	if err != nil {
+		return false, err
+	}
+	return set, nil
+}
+
+// --- Delivery status cache ---
+
+// CacheNotificationStatus caches the status string for a notification ID.
+// Avoids hitting Postgres on every GET /notifications/:id poll.
+func (c *Client) CacheNotificationStatus(ctx context.Context, notificationId string, status string) error {
+	key := fmt.Sprintf("notif:status:%s", notificationId)
+	return c.rdb.Set(ctx, key, status, 10*time.Minute).Err()
+}
+
+func (c *Client) GetNotificationStatus(ctx context.Context, notificationId string) (string, error) {
+
+	key := fmt.Sprintf("notif:status:%s", notificationId)
+	val, err := c.rdb.Get(ctx, key).Result()
+	if err != nil {
+		return "", err
+	}
+	return val, nil
 }
