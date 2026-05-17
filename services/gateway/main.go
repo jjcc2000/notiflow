@@ -10,10 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jjcc2000/notiflow/redis"
+	"github.com/jjcc2000/notiflow/pkg/redis"
 	"go.uber.org/zap"
 
-	redisclient "github.com/jjcc2000/notiflow/redis"
+	redisclient "github.com/jjcc2000/notiflow/pkg/redis"
 )
 
 // AuthMiddleware authenticates API keys using Redis cache → Postgres fallback.
@@ -91,7 +91,7 @@ func lookUpTenantFromDB(ctx context.Context, db *pgxpool.Pool, apiKey string) (s
 	return tenantID, err
 }
 
-// proxyTo is a simplified reverse proxy handler.
+// proxyTo is a simplifpkg/ied reverse proxy handler.
 // In production use httputil.ReverseProxy with connection pooling.
 func proxyTo(target string) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
