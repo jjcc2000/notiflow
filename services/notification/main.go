@@ -1,8 +1,9 @@
-package notification
+package main
 
 import (
 	"context"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,12 +22,12 @@ type NotificationService struct {
 	log   *zap.Logger
 }
 
-type CreateNotificaionRequest struct {
+type CreateNotificationRequest struct {
 	UserID         string            `json:"user_id" binding:"required"`
 	TemplateID     string            `json:"template_id" binding:"required"`
 	Channel        models.Channel    `json:"channel" binding:"required,oneof=email webhook sms"`
 	Payload        map[string]string `json:"payload"`
-	IdempotencyKey string            `json:"idempondency_key"`
+	IdempotencyKey string            `json:"idempotency_key"`
 	ScheduledAt    *time.Time        `json:"scheduled_at,omitempty"`
 }
 
@@ -44,7 +45,7 @@ func (s *NotificationService) Create(c *gin.Context) {
 		return
 	}
 
-	var req CreateNotificaionRequest
+	var req CreateNotificationRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -122,7 +123,7 @@ func (s *NotificationService) Create(c *gin.Context) {
 
 		_ = s.updateStatus(c.Request.Context(), notif.ID, models.StatusFailed)
 
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed top queue notification"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to queue notification"})
 
 		return
 	}
@@ -141,6 +142,34 @@ func (s *NotificationService) Create(c *gin.Context) {
 
 }
 
+// GetStatus is GET /v1/notifications/:id
+// Checks Redis status cache before hitting Postgres.
+func (s *NotificationService) GetStatus(c *gin.Context) {
+	notifID := c.Param("id")
+
+	// Check Redis first
+	status, _ := s.redis.GetNotificationStatus(c.Request.Context(), notifID)
+	if status != "" {
+		c.JSON(http.StatusOK, gin.H{"id": notifID, "status": status, "source": "cache"})
+		return
+	}
+
+	// Fall back to Postgres
+	var dbStatus string
+	err := s.db.QueryRow(c.Request.Context(),
+		"SELECT status FROM notifications WHERE id = $1",
+		notifID,
+	).Scan(&dbStatus)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "notification not found"})
+		return
+	}
+
+	// Populate cache for next poll
+	_ = s.redis.CacheNotificationStatus(c.Request.Context(), notifID, dbStatus)
+
+	c.JSON(http.StatusOK, gin.H{"id": notifID, "status": dbStatus, "source": "db"})
+}
 func channelTopic(ch models.Channel) string {
 	switch ch {
 
@@ -157,9 +186,9 @@ func channelTopic(ch models.Channel) string {
 }
 func (s *NotificationService) insertNotification(ctx context.Context, n *models.Notification) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO notifications (id, tenant_id, user_id, template_id, channel, status, idempotency_key, scheduled_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, n.ID, n.TenantID, n.UserID, n.TemplateID, n.Channel, n.Status, n.IdempotencyKey, n.ScheduledAt, n.CreatedAt)
+		INSERT INTO notifications (id, tenant_id, user_id, template_id, channel, status, payload, idempotency_key, scheduled_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, n.ID, n.TenantID, n.UserID, n.TemplateID, n.Channel, n.Status, n.Payload, n.IdempotencyKey, n.ScheduledAt, n.CreatedAt)
 	return err
 }
 
@@ -168,11 +197,35 @@ func (s *NotificationService) updateStatus(ctx context.Context, id uuid.UUID, st
 	return err
 }
 
-func (s *NotificationService) renderTemplate(ctx context.Context, templateID string, paylod map[string]string) (string, string, error) {
+func (s *NotificationService) renderTemplate(ctx context.Context, templateID string, payload map[string]string) (string, string, error) {
 	return "Your notification", "<p>Hello from Notiflow</p>", nil
 
 }
 
 func main() {
 
+	log, _ := zap.NewProduction()
+	defer log.Sync()
+
+	db, _ := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
+	producer := kafkaclient.NewProducer([]string{os.Getenv("KAFKA_BROKERS")}, log)
+	redis := redisclient.New(os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"), 0)
+
+	svc := &NotificationService{
+		db:    db,
+		kafka: producer,
+		redis: redis,
+		log:   log,
+	}
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.POST("/notifications", svc.Create)
+	r.GET("/notifications/:id", svc.GetStatus)
+	r.GET("/healthz", func(ctx *gin.Context) {
+		ctx.Status(http.StatusOK)
+	})
+
+	log.Info("notification service listening")
+	r.Run(":8081")
 }
