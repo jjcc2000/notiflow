@@ -1,27 +1,27 @@
 package models
- 
+
 import (
-	"time"
 	"github.com/google/uuid"
+	"time"
 )
- 
+
 type Channel string
- 
+
 const (
 	ChannelEmail   Channel = "email"
 	ChannelWebhook Channel = "webhook"
 	ChannelSMS     Channel = "sms"
 )
- 
+
 type NotificationStatus string
- 
+
 const (
 	StatusPending   NotificationStatus = "pending"
 	StatusQueued    NotificationStatus = "queued"
 	StatusDelivered NotificationStatus = "delivered"
 	StatusFailed    NotificationStatus = "failed"
 )
- 
+
 // Tenant is a company that uses NotiFlow via API key.
 type Tenant struct {
 	ID         uuid.UUID `db:"id" json:"id"`
@@ -29,8 +29,9 @@ type Tenant struct {
 	APIKeyHash string    `db:"api_key_hash" json:"-"`
 	Plan       string    `db:"plan" json:"plan"`
 	CreatedAt  time.Time `db:"created_at" json:"created_at"`
+	Active     bool      `db:"active" json:"active"`
 }
- 
+
 // Notification is the core domain object — one send request.
 type Notification struct {
 	ID             uuid.UUID          `db:"id" json:"id"`
@@ -44,7 +45,7 @@ type Notification struct {
 	ScheduledAt    *time.Time         `db:"scheduled_at" json:"scheduled_at,omitempty"`
 	CreatedAt      time.Time          `db:"created_at" json:"created_at"`
 }
- 
+
 // DeliveryLog records every delivery attempt — success or failure.
 type DeliveryLog struct {
 	ID               uuid.UUID `db:"id" json:"id"`
@@ -54,7 +55,7 @@ type DeliveryLog struct {
 	ProviderResponse string    `db:"provider_response" json:"provider_response"`
 	DeliveredAt      time.Time `db:"delivered_at" json:"delivered_at"`
 }
- 
+
 // NotificationEvent is the Kafka message published to each channel topic.
 type NotificationEvent struct {
 	NotificationID uuid.UUID         `json:"notification_id"`

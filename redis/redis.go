@@ -90,6 +90,11 @@ func (c *Client) GetCachedTenantAuth(ctx context.Context, apiKey string) (string
 
 }
 
+func (c *Client) CacheTenantAuth(ctx context.Context, apiKey string, tenantID string) error {
+	key := authCached(apiKey)
+	return c.rdb.Set(ctx, key, tenantID, 5*time.Minute).Err()
+}
+
 func (c *Client) InvalitedTenantAuth(ctx context.Context, apiKey string) error {
 	return c.rdb.Del(ctx, authCached(apiKey)).Err()
 }
