@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -210,7 +211,7 @@ func main() {
 	log, _ := zap.NewProduction()
 	defer log.Sync()
 
-	brokers := []string{os.Getenv("KAFKA_BROKERS")} // e.g. "kafka-1:9092,kafka-2:9092"
+	brokers := strings.Split(os.Getenv("KAFKA_BROKERS"), ",") // e.g. "kafka-1:9092,kafka-2:9092"
 	dbURL := os.Getenv("DATABASE_URL")
 
 	db, err := pgxpool.New(context.Background(), dbURL)

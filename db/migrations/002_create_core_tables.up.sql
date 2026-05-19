@@ -20,6 +20,7 @@ CREATE TABLE notifications (
     channel          TEXT NOT NULL CHECK (channel IN ('email', 'webhook', 'sms')),
     status           TEXT NOT NULL DEFAULT 'pending'
                      CHECK (status IN ('pending', 'queued', 'delivered', 'failed')),
+    payload          JSONB,
     idempotency_key  TEXT,
     scheduled_at     TIMESTAMPTZ,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()

@@ -1,0 +1,128 @@
+# infra/k8s/deployments/email-consumer.yaml
+# The email consumer runs as a long-lived Deployment in K8s.
+# HPA scales replicas based on Kafka consumer lag (custom metric).
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-consumer
+  namespace: notiflow-services
+  labels:
+    app: email-consumer
+    component: consumer
+    channel: email
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: email-consumer
+  template:
+    metadata:
+      labels:
+        app: email-consumer
+      annotations:
+        # Prometheus scrape annotations — Grafana picks these up automatically
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: notiflow-consumer  # IAM role for SES access
+      terminationGracePeriodSeconds: 60       # Give consumer time to finish in-flight message
+
+      containers:
+        - name: email-consumer
+          image: YOUR_ECR_REPO/notiflow-email-consumer:latest
+          ports:
+            - containerPort: 9090   # Prometheus metrics
+              name: metrics
+          env:
+            - name: KAFKA_BROKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: notiflow-config
+                  key: kafka_brokers
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notiflow-secrets
+                  key: database_url
+            - name: SES_FROM_ADDRESS
+              valueFrom:
+                configMapKeyRef:
+                  name: notiflow-config
+                  key: ses_from_address
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+# HPA scales consumers based on Kafka lag (via KEDA or Prometheus adapter).
+# More lag = more replicas = faster drain.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: email-consumer-hpa
+  namespace: notiflow-services
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: email-consumer
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Custom metric: Kafka consumer lag (requires Prometheus adapter or KEDA)
+    - type: External
+      external:
+        metric:
+          name: kafka_consumer_lag
+          selector:
+            matchLabels:
+              topic: notifications.email
+              group: notiflow-email-consumer
+        target:
+          type: AverageValue
+          averageValue: "1000"   # Scale up when lag > 1000 messages per replica
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notiflow-config
+  namespace: notiflow-services
+data:
+  kafka_brokers: "kafka.notiflow-services.svc.cluster.local:9092"
+  ses_from_address: "notifications@notiflow.io"
+  redis_addr: "redis-master.notiflow-services.svc.cluster.local:6379"
+
+---
+# RBAC: consumer service account gets IAM role for SES via IRSA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: notiflow-consumer
+  namespace: notiflow-services
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/notiflow-consumer-role

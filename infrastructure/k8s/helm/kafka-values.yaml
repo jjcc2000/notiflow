@@ -1,0 +1,35 @@
+# helm install kafka bitnami/kafka -f kafka-values.yaml -n notiflow-services
+replicaCount: 1
+
+kraft:
+  enabled: true   # No ZooKeeper needed — KRaft mode
+
+persistence:
+  enabled: true
+  size: 8Gi
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi
+
+autoCreateTopicsEnable: false
+
+provisioning:
+  enabled: true
+  topics:
+    - name: notifications.email
+      partitions: 6
+      replicationFactor: 1
+    - name: notifications.webhook
+      partitions: 6
+      replicationFactor: 1
+    - name: notifications.sms
+      partitions: 3
+      replicationFactor: 1
+    - name: notifications.audit
+      partitions: 3
+      replicationFactor: 1

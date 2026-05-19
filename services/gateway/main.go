@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jjcc2000/notiflow/pkg/redis"
 	"go.uber.org/zap"
 
 	redisclient "github.com/jjcc2000/notiflow/pkg/redis"
@@ -18,7 +17,7 @@ import (
 
 // AuthMiddleware authenticates API keys using Redis cache → Postgres fallback.
 // Cache hit: ~1ms. Cache miss (Postgres): ~5ms. Zero penalty after first request.
-func AuthMiddleware(redis *redis.Client, db *pgxpool.Pool, log *zap.Logger) gin.HandlerFunc {
+func AuthMiddleware(redis *redisclient.Client, db *pgxpool.Pool, log *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey := c.GetHeader("X-API-KEY")
 		if apiKey == "" {
@@ -123,7 +122,7 @@ func main() {
 	api.Use(RateLimitMiddleware(redis, 1000))
 
 	api.POST("/notifications", proxyTo("http://notification-service:8081"))
-	api.POST("/notifications/:id", proxyTo("http://notification-service:8081"))
+	api.GET("/notifications/:id", proxyTo("http://notification-service:8081"))
 	api.POST("/templates", proxyTo("http://template-service:8082"))
 	api.POST("/subscription", proxyTo("http://template-service:8083"))
 

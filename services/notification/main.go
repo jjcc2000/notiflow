@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -208,7 +209,7 @@ func main() {
 	defer log.Sync()
 
 	db, _ := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
-	producer := kafkaclient.NewProducer([]string{os.Getenv("KAFKA_BROKERS")}, log)
+	producer := kafkaclient.NewProducer(strings.Split(os.Getenv("KAFKA_BROKERS"), ","), log)
 	redis := redisclient.New(os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"), 0)
 
 	svc := &NotificationService{
