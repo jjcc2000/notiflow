@@ -30,7 +30,6 @@ func AuthMiddleware(redis *redisclient.Client, db *pgxpool.Pool, log *zap.Logger
 
 		if err != nil {
 			log.Warn("Redis auth cache error - falling back to postgres", zap.Error(err))
-
 		}
 
 		//2 Cache miss - hit Postgres and populate cache
@@ -41,11 +40,8 @@ func AuthMiddleware(redis *redisclient.Client, db *pgxpool.Pool, log *zap.Logger
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid API key"})
 				return
 			}
-
 			_ = redis.CacheTenantAuth(c.Request.Context(), apiKey, tenantID)
-
 		}
-
 		c.Set("tenant_id", tenantID)
 		c.Next()
 	}
@@ -107,7 +103,6 @@ func main() {
 
 	db, _ := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
 	redis := redisclient.New(
-
 		os.Getenv("REDIS_ADDR"),
 		os.Getenv("REDIS_PASSWORD"), 0,
 	)
