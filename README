@@ -1,0 +1,82 @@
+# NotiFlow
+
+Multi-tenant notification delivery platform. Companies integrate via API key to send email, webhook, and SMS notifications to their users. Built to demonstrate production-grade backend architecture.
+
+## Architecture
+
+```
+Tenant → API Gateway (Go/Gin)
+              ↓ Redis: rate limit + auth cache
+         ┌────┴──────────┐
+  Notification Svc    Template Svc    Subscription Svc
+         └────┬──────────┘
+              ↓ Kafka (MSK)
+  ┌───────────┼───────────┬──────────────┐
+Email     Webhook       SMS           Audit
+Consumer  Consumer    Consumer       Consumer
+  ↓           ↓           ↓               ↓
+ SES       HTTP POST   SNS/Twilio    Postgres metrics
+              ↓
+           Postgres (RDS) — delivery logs, state
+```
+
+## Stack
+
+| Layer | Technology | Why |
+|---|---|---|
+| API services | Go/Gin | Fast, typed, low memory |
+| Event bus | Kafka (MSK) | Durable, replayable, fan-out |
+| Cache & rate limiting | Redis (ElastiCache) | Sub-ms auth checks, idempotency |
+| Database | Postgres (RDS) | Relational audit trail, tenant isolation |
+| Container orchestration | Kubernetes (EKS) | HPA scaling, RBAC, network policies |
+| Infrastructure | Terraform | Reproducible one-command deploy |
+| Observability | Prometheus + Grafana | Consumer lag, delivery rate, p99 latency |
+
+## Key design decisions
+
+**Why Kafka instead of SQS?**
+Kafka gives us consumer group replay — if the email consumer crashes mid-batch, it restarts from the last committed offset. SQS would require manual DLQ processing. The audit topic also lets us run two consumer groups on the same stream (delivery + analytics) without duplicating publishes.
+
+**Why Redis for rate limiting?**
+`INCR + EXPIRE` is atomic and sub-millisecond. A Postgres-based rate limiter would serialize all requests through the DB. Redis fails open (auth falls back to Postgres) so a Redis outage doesn't take down the API.
+
+**Why explicit offset commit?**
+`CommitInterval: 0` disables auto-commit. The consumer only commits after a successful SES call and DB write. A failed delivery does not commit — Kafka redelivers. This gives at-least-once delivery semantics without a separate retry queue.
+
+**Idempotency key flow**
+`SetNX` (atomic check-and-set) on the idempotency key prevents duplicate sends on client retries. Key expires after 24h. Returns HTTP 200 (not 409) on duplicate — client-friendly.
+
+## Running locally
+
+```bash
+# Start Kafka + Redis + Postgres
+docker-compose up -d
+
+# Run migrations
+migrate -path db/migrations -database $DATABASE_URL up
+
+# Start a service
+go run ./services/notification/...
+
+# Start email consumer
+go run ./consumers/email/...
+```
+
+## Deploying
+
+```bash
+cd infra/terraform
+terraform init
+terraform apply -var env=dev
+
+# Apply K8s manifests
+kubectl apply -f infra/k8s/
+```
+
+## Observability
+
+Each service exposes `/metrics` on port 9090. Key Grafana dashboards:
+- Kafka consumer lag per topic
+- Delivery success rate per channel per tenant
+- Redis cache hit rate
+- p99 API gateway latency
