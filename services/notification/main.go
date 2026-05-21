@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
-	"time"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -21,6 +23,7 @@ type NotificationService struct {
 	kafka *kafkaclient.Producer
 	redis *redisclient.Client
 	log   *zap.Logger
+	templateURL string
 }
 
 type CreateNotificationRequest struct {
@@ -199,8 +202,26 @@ func (s *NotificationService) updateStatus(ctx context.Context, id uuid.UUID, st
 }
 
 func (s *NotificationService) renderTemplate(ctx context.Context, templateID string, payload map[string]string) (string, string, error) {
-	return "Your notification", "<p>Hello from Notiflow</p>", nil
+	resp, err := http.Get(s.templateURL + "/templates/" + templateID)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("template fetch failed")
+	}
+	defer resp.Body.Close()
 
+	var t struct {
+		Subject  string `json:"subject"`
+		BodyHTML string `json:"body_html"`
+	}
+	json.NewDecoder(resp.Body).Decode(&t)
+
+	// Replace {{key}} placeholders with payload values
+	pairs := make([]string, 0, len(payload)*2)
+	for k, v := range payload {
+		pairs = append(pairs, "{{"+k+"}}", v)
+	}
+	r := strings.NewReplacer(pairs...)
+
+	return r.Replace(t.Subject), r.Replace(t.BodyHTML), nil
 }
 
 func main() {
@@ -217,6 +238,7 @@ func main() {
 		kafka: producer,
 		redis: redis,
 		log:   log,
+		templateURL: os.Getenv("TEMPLATE_SERVICE_URL"),
 	}
 
 	r := gin.New()
