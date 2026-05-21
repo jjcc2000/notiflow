@@ -19,11 +19,12 @@ import (
 )
 
 type NotificationService struct {
-	db    *pgxpool.Pool
-	kafka *kafkaclient.Producer
-	redis *redisclient.Client
-	log   *zap.Logger
-	templateURL string
+	db              *pgxpool.Pool
+	kafka           *kafkaclient.Producer
+	redis           *redisclient.Client
+	log             *zap.Logger
+	templateURL     string
+	subscriptionURL string
 }
 
 type CreateNotificationRequest struct {
@@ -40,6 +41,7 @@ type CreateNotificationRequest struct {
 func (s *NotificationService) Create(c *gin.Context) {
 	tenantID := c.GetHeader("X-Tenant-ID")
 
+	
 	// Verify is the the tenantID is valid
 	tenantUUID, err := uuid.Parse(tenantID)
 	if err != nil {
@@ -72,6 +74,12 @@ func (s *NotificationService) Create(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "duplicate", "message": "notification already queued"})
 			return
 		}
+	}
+
+	// Check opt-out before saving or publishing
+	if s.isOptedOut(c.Request.Context(), req.UserID, string(req.Channel), tenantID) {
+		c.JSON(http.StatusOK, gin.H{"status": "skipped", "reason": "user opted out"})
+		return
 	}
 
 	//Render template by calling template service\
@@ -224,6 +232,29 @@ func (s *NotificationService) renderTemplate(ctx context.Context, templateID str
 	return r.Replace(t.Subject), r.Replace(t.BodyHTML), nil
 }
 
+func (s *NotificationService) isOptedOut(ctx context.Context, userID, channel, tenantID string) bool {
+
+	url := fmt.Sprintf("%s/subscription/%s?channel=%s", s.subscriptionURL, userID, channel)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req.Header.Set("X-Tenant-ID", tenantID)
+
+	resp, err := http.DefaultClient.Do(req)
+
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return false // fail open — if subscription service is down, allow the send
+	}
+
+	defer resp.Body.Close()
+
+	var result struct {
+		OptedOut bool `json:"opted_out"`
+	}
+
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	return result.OptedOut
+}
+
 func main() {
 
 	log, _ := zap.NewProduction()
@@ -234,11 +265,12 @@ func main() {
 	redis := redisclient.New(os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"), 0)
 
 	svc := &NotificationService{
-		db:    db,
-		kafka: producer,
-		redis: redis,
-		log:   log,
-		templateURL: os.Getenv("TEMPLATE_SERVICE_URL"),
+		db:          db,
+		kafka:       producer,
+		redis:       redis,
+		log:         log,
+		templateURL:     os.Getenv("TEMPLATE_SERVICE_URL"),
+		subscriptionURL: os.Getenv("SUBSCRIPTION_SERVICE_URL"),
 	}
 
 	r := gin.New()

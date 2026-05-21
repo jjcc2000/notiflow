@@ -1,5 +1,4 @@
 services:
-
   postgres:
     image: postgres:16-alpine
     environment:
@@ -31,7 +30,14 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     healthcheck:
-      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      test:
+        [
+          "CMD",
+          "/opt/kafka/bin/kafka-topics.sh",
+          "--bootstrap-server",
+          "localhost:9092",
+          "--list",
+        ]
       interval: 10s
       timeout: 30s
       retries: 15
@@ -73,6 +79,20 @@ services:
       -database=postgres://notiflow:notiflow@postgres:5432/notiflow?sslmode=disable
       up
 
+  subscription:
+    build:
+      context: .
+      dockerfile: ./services/subscription/Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      DATABASE_URL: postgres://notiflow:notiflow@postgres:5432/notiflow?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   gateway:
     build:
       context: .
@@ -103,6 +123,8 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ""
       TEMPLATE_SERVICE_URL: http://template:8082
+      SUBSCRIPTION_SERVICE_URL: http://subscription:8083
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,6 +135,8 @@ services:
       migrate:
         condition: service_completed_successfully
       template:
+        condition: service_started
+      subscription:
         condition: service_started
 
   template:
