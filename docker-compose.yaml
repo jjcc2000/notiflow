@@ -153,6 +153,21 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  webhook-consumer:
+    build:
+      context: .
+      dockerfile: consumers/webhook/Dockerfile
+    environment:
+      DATABASE_URL: postgres://notiflow:notiflow@postgres:5432/notiflow?sslmode=disable
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
   email-consumer:
     build:
       context: .

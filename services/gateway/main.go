@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -89,11 +92,19 @@ func lookUpTenantFromDB(ctx context.Context, db *pgxpool.Pool, apiKey string) (s
 // proxyTo is a simplifpkg/ied reverse proxy handler.
 // In production use httputil.ReverseProxy with connection pooling.
 func proxyTo(target string) gin.HandlerFunc {
+	url, _ := url.Parse(target)
+	proxy := httputil.NewSingleHostReverseProxy(url)
+
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = url.Scheme
+		req.URL.Host = url.Host
+		req.Host = url.Host
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, "/v1")
+	}
+
 	return func(ctx *gin.Context) {
-		// Forward tenant_id as internal header so downstream services trust it
 		ctx.Request.Header.Set("X-Tenant-ID", ctx.GetString("tenant_id"))
-		// Real Implementacio
-		ctx.Status(http.StatusOK)
+		proxy.ServeHTTP(ctx.Writer, ctx.Request)
 	}
 }
 
@@ -116,10 +127,10 @@ func main() {
 	api.Use(AuthMiddleware(redis, db, log))
 	api.Use(RateLimitMiddleware(redis, 1000))
 
-	api.POST("/notifications", proxyTo("http://notification-service:8081"))
-	api.GET("/notifications/:id", proxyTo("http://notification-service:8081"))
-	api.POST("/templates", proxyTo("http://template-service:8082"))
-	api.POST("/subscription", proxyTo("http://template-service:8083"))
+	api.POST("/notifications", proxyTo("http://notification:8081"))
+	api.GET("/notifications/:id", proxyTo("http://notification:8081"))
+	api.POST("/templates", proxyTo("http://template:8082"))
+	api.POST("/subscription", proxyTo("http://subscription:8083"))
 
 	r.GET("/healthz", func(ctx *gin.Context) { ctx.Status(http.StatusOK) })
 
