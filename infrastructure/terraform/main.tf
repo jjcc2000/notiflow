@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
   backend "s3" {
     bucket = "notiflow-tf-state"
@@ -18,6 +22,11 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+}
+
+module "vpc" {
+  source = "./modules/vpc"
+  env    = var.env
 }
 
 module "eks" {
